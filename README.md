@@ -1,244 +1,327 @@
-# Step 02 — Feature Engineering with DuckDB
+# Step 03a — Build User-Item Interaction Matrix
 
-**Branch:** `step/02-feature-engineering`  
-**Input:** `data/raw/users.parquet`, `data/raw/items.parquet`, `data/raw/events.parquet`  
-**Output:** `data/features/training_data.parquet`  
-**Next step:** `step/03-model-training`
+**Branch:** `step/03-model-training`  
+**Input:** `data/features/training_data.parquet`  
+**Output:** `data/matrix/interaction_matrix.npz`, `user_index.parquet`, `item_index.parquet`, `matrix_stats.json`  
+**Next:** Step 03b — ALS training
 
 ---
 
 ## What This Step Does
 
-Takes the raw behavioral event log from Step 1 and transforms it into a structured
-training table where every row has:
-
-- A **group key** (`session_id` or `query_string`) — tells LambdaRank which rows compete against each other
-- A **relevance label** (0–3) — the target the model learns to predict
-- A set of **numerical features** — signals the model uses to rank items
-
-This is the most SQL-heavy step in the project and the closest equivalent to what BigQuery
-does in a production GCP pipeline.
-
----
-
-## Why DuckDB?
-
-DuckDB runs entirely in-process with Python — no server, no Docker, no credentials.
-It reads Parquet files natively, supports full analytical SQL (window functions,
-CTEs, lateral joins), and produces results fast enough for our dataset size.
-
-The SQL written here is **intentionally identical** to what you would write in BigQuery,
-with minor dialect differences. Migrating to BigQuery later requires almost no rewriting.
-
----
-
-## The Feature Engineering Problem
-
-Raw events look like this:
+Transforms the feature-engineered training table into a **sparse matrix R** that
+ALS can factorize. This is the data structure at the heart of collaborative filtering.
 
 ```
-session_id | user_id | item_id | position | was_clicked | was_purchased
-s_0000001  | u_00042 | i_00301 |    3     |    True     |    False
-s_0000001  | u_00042 | i_00892 |    7     |    False    |    False
-s_0000001  | u_00042 | i_00017 |    1     |    True     |    True
-```
-
-A model can't learn from this directly. It needs features that **aggregate behavior
-across many sessions** to reveal signal. For example:
-
-- `item_global_ctr = 0.18` tells the model this item gets clicked often in general
-- `query_item_ctr = 0.31` tells the model this item is particularly popular for *this* query
-- `user_top_category_match = 1` tells the model this item matches the user's taste
-
-These aggregates are computed in SQL and joined back onto every impression row.
-
----
-
-## The Five Feature Buckets
-
-### Bucket 1 — Item Popularity
-*How good is this item globally, across all users?*
-
-Aggregated at the **item level**. One row per item.
-
-| Feature | Description | Why it matters |
-|---|---|---|
-| `item_global_ctr` | clicks / impressions across all sessions | Items with high CTR are genuinely attractive |
-| `item_global_cvr` | purchases / clicks globally | Converts clicks into money — strongest quality proxy |
-| `item_avg_position_when_clicked` | avg rank at click time | If users click it even from rank 8, it's a strong item |
-| `item_impression_count` | total times shown | Low count = unreliable stats, high count = trustworthy signal |
-| `item_total_purchases` | total purchases | Absolute purchase volume |
-
-### Bucket 2 — Query-Item Features
-*How well does this item perform for this specific search query?*
-
-Aggregated at the **(query, item) pair level**. Only populated for search sessions.
-Homepage rows get `0` for all of these.
-
-| Feature | Description | Why it matters |
-|---|---|---|
-| `query_item_ctr` | CTR for this item under this query | Captures query-specific relevance |
-| `query_item_cvr` | CVR for this item under this query | Revenue signal per query |
-| `query_item_impressions` | how often shown for this query | Reliability of the above stats |
-| `query_item_avg_position` | avg rank for this query | Baseline from retrieval system |
-
-> This is the most powerful bucket for search reranking. An item that converts well
-> specifically for "running shoes" should rank high for that query even if it's mediocre
-> globally.
-
-### Bucket 3 — User-Item History
-*Has this user interacted with this exact item before?*
-
-Aggregated at the **(user, item) pair level**.
-
-| Feature | Description | Why it matters |
-|---|---|---|
-| `user_item_click_count` | how many times user clicked this item | Repeat interest signal |
-| `user_item_purchased_before` | binary: has user bought this? | If yes, probably don't resurface it |
-
-### Bucket 4 — User Affinity
-*What does this user tend to buy in general?*
-
-Aggregated at the **(user, category) level**, then joined with item category.
-
-| Feature | Description | Why it matters |
-|---|---|---|
-| `user_category_click_share` | % of user's clicks in this item's category | Preference signal |
-| `user_category_purchase_share` | % of user's purchases in this category | Stronger preference signal |
-| `user_top_category_match` | binary: is item in user's #1 category? | Direct match flag |
-| `user_price_match` | binary: does item price bucket = user's preferred bucket? | Budget alignment |
-
-### Bucket 5 — User Activity
-*How engaged is this user overall?*
-
-Aggregated at the **user level**.
-
-| Feature | Description | Why it matters |
-|---|---|---|
-| `user_total_sessions` | lifetime session count | Power user vs. casual visitor |
-| `user_total_clicks` | lifetime clicks | Engagement level |
-| `user_total_purchases` | lifetime purchases | High-value user signal |
-| `user_overall_ctr` | user's average CTR across all sessions | Clickiness baseline |
-| `user_overall_cvr` | user's purchase rate per click | Buying intent baseline |
-
----
-
-## The Final Training Table Schema
-
-Every row = one item shown to one user in one session.
-
-```
-training_data.parquet
-│
-├── Identifiers (not fed to model)
-│   ├── session_id          group key for homepage ranking
-│   ├── user_id
-│   ├── item_id
-│   ├── session_type        'search' or 'homepage'
-│   ├── query_string        group key for search ranking (null for homepage)
-│   └── shown_position      original rank — used to verify position bias correction
-│
-├── Label
-│   └── relevance_label     0=ignored, 1=clicked, 2=carted, 3=purchased
-│
-├── Item metadata (used for filtering/analysis, not direct features)
-│   ├── item_category
-│   ├── item_price_bucket
-│   └── item_price
-│
-└── Features (30 numerical columns fed to LightGBM)
-    ├── item_global_ctr
-    ├── item_global_cvr
-    ├── item_avg_position_when_clicked
-    ├── item_impression_count
-    ├── item_total_purchases
-    ├── query_item_ctr
-    ├── query_item_cvr
-    ├── query_item_impressions
-    ├── query_item_avg_position
-    ├── user_item_click_count
-    ├── user_item_purchased_before
-    ├── user_category_click_share
-    ├── user_category_purchase_share
-    ├── user_price_match
-    ├── user_top_category_match
-    ├── user_total_sessions
-    ├── user_total_clicks
-    ├── user_total_purchases
-    ├── user_overall_ctr
-    └── user_overall_cvr
+training_data.parquet          sparse matrix R
+(500k rows)          →         (n_users × n_items)
+user_id | item_id | label      value = confidence weight c_ui
 ```
 
 ---
 
-## An Important Note on Data Leakage
+## The Core Concept: From Events to a Matrix
 
-All features here are **aggregated over the entire event log** — including the session
-being used as a training example. In a production system you would use a **training cutoff date**:
+Raw events are a long list of (user, item, interaction) records. ALS needs a matrix
+where rows are users, columns are items, and each cell holds a number representing
+how strongly a user prefers an item.
 
-```sql
--- Production-safe version
-WHERE timestamp < '2024-09-01'   -- only use past data to compute features
+```
+         i_00001  i_00002  i_00003  i_00004  ...
+u_00001  [  161  ] [   0  ] [  41  ] [   0  ]
+u_00002  [   0  ] [  81  ] [   0  ] [   0  ]
+u_00003  [  41  ] [   0  ] [   0  ] [ 161  ]
+   ...
 ```
 
-For this project we skip the cutoff to keep the code simple, but Step 3 will do a
-**time-based train/validation split** to partially compensate for this.
+Most cells are zero — users only interact with a tiny fraction of all items.
+This is why we use a **sparse matrix** (only stores non-zero values).
+
+---
+
+## Implicit Feedback: Preference vs Confidence
+
+This is the most important conceptual shift from traditional recommendation systems.
+
+In explicit feedback systems (like Netflix star ratings), users directly say "I rate
+this 4/5." We don't have that. We have implicit signals — clicks, cart adds, purchases
+— which tell us a user *probably* likes something but never say they *don't* like it.
+
+The Hu, Koren & Volinsky (2008) paper formalizes this with two variables per (user, item) pair:
+
+### Preference `p_ui`
+Binary. Did the user show any preference for this item?
+
+```
+relevance_label > 0  →  p_ui = 1  (user interacted — we think they like it)
+relevance_label = 0  →  p_ui = 0  (user was shown it but ignored it — unknown)
+```
+
+Note: `p_ui = 0` does NOT mean the user dislikes the item. They may simply not have
+noticed it, or it was shown at a bad position. This ambiguity is why we don't store
+negative signals — we call them "unknown" instead.
+
+### Confidence `c_ui`
+How strongly do we trust this preference signal?
+
+```
+c_ui = 1 + alpha × interaction_strength
+```
+
+| Event | Label | Confidence (alpha=40) | Interpretation |
+|---|---|---|---|
+| Shown, ignored | 0 | 1.0 | Almost no signal |
+| Clicked | 1 | 41 | Mild preference |
+| Added to cart | 2 | 81 | Strong preference |
+| Purchased | 3 | 161 | Strongest signal |
+
+A purchase is treated as 4× more trustworthy than a click. The matrix stores
+these confidence values — not the raw labels.
+
+### Why alpha=40?
+Alpha controls the gap between "interacted" and "not interacted." Too low and the
+model can't distinguish signal from noise. Too high and it overfits to observed
+interactions. 40 is the value from the original Hu et al. paper and a standard
+starting point — it can be tuned in later iterations.
+
+---
+
+## Handling Multiple Sessions
+
+A user might see the same item in multiple sessions. We resolve this by taking
+the **maximum label** across all sessions:
+
+```
+user u_00042 saw item i_00301:
+  Session 1: was_clicked=True,  label=1
+  Session 2: was_purchased=True, label=3
+  → final label = 3 (purchase wins)
+```
+
+This prevents a single purchase from being diluted by earlier browse sessions.
+
+---
+
+## The Sparsity Problem
+
+With 5,000 users and 2,000 items, the full matrix would have 10,000,000 cells.
+Only a small fraction will be non-zero — this is called **sparsity**, and it's
+the core challenge ALS is designed to solve.
+
+```
+Density ≈ 0.5–2%   →   ~50,000–200,000 known preferences
+          98–99.5% unknown
+```
+
+ALS learns to fill in the unknowns by finding patterns:
+*"Users who bought A and B also tend to buy C — so predict high score for C
+for any user who bought A and B but hasn't seen C yet."*
+
+---
+
+## Output Files
+
+| File | Description |
+|---|---|
+| `interaction_matrix.npz` | Sparse CSR matrix R, shape (n_users × n_items), scipy format |
+| `user_index.parquet` | Maps `user_id` string → integer row index |
+| `item_index.parquet` | Maps `item_id` string → integer column index |
+| `matrix_stats.json` | Shape, density, confidence distribution stats |
+
+The index files are critical — they allow us to go back from matrix row/column
+numbers to real user_id and item_id strings at serving time.
 
 ---
 
 ## How to Run
 
 ```bash
-python scripts/02_feature_engineering.py
+python scripts/03a_interaction_matrix.py
 ```
 
-Expected runtime: ~30 seconds for 500k rows on a laptop.
+Expected runtime: ~10 seconds.
 
 ---
 
-## Expected Output
+## Project Structure at This Stage
 
 ```
-============================================================
-Step 2: Feature Engineering (DuckDB)
-============================================================
-
-Building feature tables...
-  ✓ Loaded raw parquet views
-  ✓ feat_item_popularity
-  ✓ feat_query_item
-  ✓ feat_user_item
-  ✓ feat_user_affinity
-  ✓ feat_user_activity
-  ✓ training_data (final join)
-
-Exporting training_data.parquet...
-  ✓ Saved → data/features/training_data.parquet
-  ✓ Shape : (500000, 28)
-
-TRAINING TABLE SUMMARY
-============================================================
-
-Total rows       : 500,000
-Search rows      : 325,000
-Homepage rows    : 175,000
-
-Label distribution:
-  Label 0:  438,000  (87.60%)  ███████████████████████████████████████████████████████████████████████████████████████
-  Label 1:   52,000  (10.40%)  ██████████
-  Label 2:    8,500  ( 1.70%)  █
-  Label 3:    1,800  ( 0.36%)
-
-Feature null check (should all be 0 after COALESCE):
-  item_global_ctr                          ✓
-  item_global_cvr                          ✓
-  query_item_ctr                           ✓
-  user_item_click_count                    ✓
-  user_category_click_share                ✓
-  user_overall_ctr                         ✓
-  user_price_match                         ✓
-  user_top_category_match                  ✓
+reranker/
+├── data/
+│   ├── raw/            (Step 1 outputs)
+│   ├── features/       (Step 2 outputs)
+│   └── matrix/
+│       ├── interaction_matrix.npz    ← generated here
+│       ├── user_index.parquet        ← generated here
+│       ├── item_index.parquet        ← generated here
+│       └── matrix_stats.json         ← generated here
+└── scripts/
+    ├── 01_generate_synthetic_data.py
+    ├── 02_feature_engineering.py
+    └── 03a_interaction_matrix.py
 ```
+
+# Step 03b — ALS Model Training (From Scratch)
+
+---
+
+## What This Step Does
+
+Trains an Alternating Least Squares (ALS) model on the sparse interaction
+matrix from Step 3a. The output is two embedding matrices:
+
+- `user_vectors.npy` — one 32-dimensional vector per user
+- `item_vectors.npy` — one 32-dimensional vector per item
+
+The dot product of any user vector and item vector produces a relevance
+score. These scores are what drive the reranker in Step 3c.
+
+---
+
+## The Math
+
+### The Problem We're Solving
+
+We have a sparse matrix **R** (5,000 × 2,000) where most entries are zero
+(unknown) and non-zero entries hold confidence weights from Step 3a.
+
+We want to find two smaller matrices:
+
+```
+R  ≈  U  ×  Iᵀ
+(N×M)  (N×K)  (K×M)
+
+N = 5,000 users
+M = 2,000 items
+K = 32    latent factors
+```
+
+Each row of **U** is a user's taste encoded as 32 numbers.
+Each row of **I** is an item's attributes encoded as 32 numbers.
+Their dot product approximates how much a user would like an item.
+
+### Why Not Gradient Descent?
+
+We could minimize the reconstruction error with gradient descent, but
+implicit feedback matrices have a problem: we have **10 million cells**
+(most unknown) and computing the full loss requires visiting all of them.
+
+ALS sidesteps this. If you fix **I**, the optimal **U** has a closed-form
+solution — no gradient descent needed. And vice versa. So we alternate:
+
+```
+Iteration 1:  Fix I (random) → solve for U analytically
+Iteration 2:  Fix U          → solve for I analytically
+Iteration 3:  Fix I          → solve for U analytically
+...repeat 15 times
+```
+
+Each solve is an independent linear system per entity — fast and parallelizable.
+
+### The Closed-Form Solution
+
+For each user `u`, fixing all item vectors **I**:
+
+```
+A  =  Iᵀ C_u I  +  λ·Identity
+b  =  Iᵀ C_u p_u
+
+user_vector_u  =  A⁻¹ b
+```
+
+Where:
+- `C_u` = diagonal matrix of confidence weights for user u's interactions
+- `p_u` = preference vector (1 for interacted items, 0 otherwise)
+- `λ`   = regularization strength (prevents overfitting)
+
+The same formula applies symmetrically for item vectors.
+
+### The Sparsity Optimization
+
+Naively, `Iᵀ C_u I` would require multiplying all item vectors by the
+full confidence matrix — O(M²K) per user. Expensive.
+
+We use the identity:
+
+```
+Iᵀ C_u I  =  Iᵀ I  +  Iᵀ (C_u - Identity) I
+```
+
+The first term `Iᵀ I` is precomputed once and shared across all users.
+The second term only involves non-zero entries of `C_u` (the items user u
+actually interacted with) — typically 10-50 items, not 2,000.
+
+This reduces the per-user cost to O(K² × nnz_u) — very fast.
+
+---
+
+## Hyperparameters
+
+| Parameter | Value | What it controls |
+|---|---|---|
+| `K` | 32 | Embedding dimension. Higher K = more expressive but slower and more prone to overfitting |
+| `n_iters` | 15 | How many alternating steps. Usually converges in 10–20 |
+| `lambda_reg` | 0.01 | L2 regularization. Higher = stronger penalty on large embeddings |
+| `alpha` | 40 | Set in Step 3a. Controls confidence gap between interactions and non-interactions |
+
+### How to tune K
+- Too low (K=4): model underfits, can't capture nuanced preferences
+- Too high (K=128): overfits to training data, slow to train
+- K=32 is a reliable starting point for datasets of this size
+
+---
+
+## What the Training Log Tells You
+
+Each iteration prints:
+
+```
+  Iter   Loss         Δ Loss       Time
+  ────── ──────────── ──────────── ────────
+  1      4,823,102.00    +0.00      3.2s
+  2      3,910,445.00  -912,657.00  3.1s
+  3      3,654,221.00  -256,224.00  3.0s
+  ...
+  15     3,401,882.00   -12,043.00  3.0s
+```
+
+**What healthy training looks like:**
+- Loss drops sharply in early iterations then flattens — normal convergence
+- Δ Loss should always be negative (loss decreasing)
+- By iteration 10–15, Δ Loss should be small — model has converged
+
+**Warning signs:**
+- Loss increasing → lambda_reg too small, try 0.1
+- Loss not decreasing at all → check matrix has non-zero entries
+- Norms exploding (>100) → regularization too weak
+
+---
+
+## The Output Embeddings
+
+After training, each user and item is represented as a 32-dimensional vector:
+
+```python
+user_vectors[42]  =  [0.12, -0.34, 0.07, 0.89, ..., -0.23]   # user u_00042
+item_vectors[301] =  [0.45,  0.11, -0.67, 0.33, ...,  0.18]  # item i_00301
+
+# Relevance score:
+score = np.dot(user_vectors[42], item_vectors[301])
+```
+
+Users with similar tastes will have similar vectors. Items in the same category
+bought by similar users will have similar vectors. The dot product captures
+how well a user's taste aligns with an item's attributes.
+
+---
+
+## How to Run
+
+```bash
+python scripts/03b_als_model.py
+```
+
+Expected runtime: ~45–90 seconds for 15 iterations on this dataset size.
 
 ---
 
@@ -248,16 +331,15 @@ Feature null check (should all be 0 after COALESCE):
 reranker/
 ├── data/
 │   ├── raw/
-│   │   ├── users.parquet
-│   │   ├── items.parquet
-│   │   └── events.parquet
-│   └── features/
-│       └── training_data.parquet    ← generated here
+│   ├── features/
+│   ├── matrix/
+│   └── model/
+│       ├── user_vectors.npy      ← (5000 × 32) float64
+│       ├── item_vectors.npy      ← (2000 × 32) float64
+│       └── training_log.json     ← loss per iteration
 └── scripts/
     ├── 01_generate_synthetic_data.py
-    └── 02_feature_engineering.py
+    ├── 02_feature_engineering.py
+    ├── 03a_interaction_matrix.py
+    └── 03b_als_model.py
 ```
-
----
-
-*Continue to → [`step/03-model-training`](../step/03-model-training/README.md)*
