@@ -9,91 +9,91 @@
       "iteration": 1,
       "loss": 1904270.2868,
       "delta": 0.0,
-      "time_s": 0.64
+      "time_s": 0.54
     },
     {
       "iteration": 2,
       "loss": 997859.7212,
       "delta": -906410.5656,
-      "time_s": 0.61
+      "time_s": 0.47
     },
     {
       "iteration": 3,
       "loss": 861710.0882,
       "delta": -136149.633,
-      "time_s": 0.67
+      "time_s": 0.47
     },
     {
       "iteration": 4,
       "loss": 787752.7742,
       "delta": -73957.314,
-      "time_s": 0.77
+      "time_s": 0.42
     },
     {
       "iteration": 5,
       "loss": 740194.238,
       "delta": -47558.5362,
-      "time_s": 0.67
+      "time_s": 0.53
     },
     {
       "iteration": 6,
       "loss": 707036.0625,
       "delta": -33158.1755,
-      "time_s": 0.64
+      "time_s": 0.55
     },
     {
       "iteration": 7,
       "loss": 682539.6346,
       "delta": -24496.4279,
-      "time_s": 0.62
+      "time_s": 0.42
     },
     {
       "iteration": 8,
       "loss": 663611.9411,
       "delta": -18927.6935,
-      "time_s": 0.62
+      "time_s": 0.43
     },
     {
       "iteration": 9,
       "loss": 648472.3997,
       "delta": -15139.5414,
-      "time_s": 0.62
+      "time_s": 0.52
     },
     {
       "iteration": 10,
       "loss": 636030.7588,
       "delta": -12441.6409,
-      "time_s": 0.62
+      "time_s": 0.7
     },
     {
       "iteration": 11,
       "loss": 625579.9459,
       "delta": -10450.8129,
-      "time_s": 0.62
+      "time_s": 0.56
     },
     {
       "iteration": 12,
       "loss": 616641.4082,
       "delta": -8938.5377,
-      "time_s": 0.66
+      "time_s": 0.64
     },
     {
       "iteration": 13,
       "loss": 608881.9002,
       "delta": -7759.508,
-      "time_s": 0.87
+      "time_s": 0.59
     },
     {
       "iteration": 14,
       "loss": 602064.11,
       "delta": -6817.7902,
-      "time_s": 0.81
+      "time_s": 0.63
     },
     {
       "iteration": 15,
       "loss": 596015.1634,
       "delta": -6048.9466,
-      "time_s": 0.72
+      "time_s": 0.76
     }
   ]
 }

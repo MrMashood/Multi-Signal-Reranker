@@ -160,6 +160,7 @@ reranker/
     ├── 02_feature_engineering.py
     └── 03a_interaction_matrix.py
 ```
+---
 
 # Step 03b — ALS Model Training (From Scratch)
 
@@ -343,3 +344,178 @@ reranker/
     ├── 03a_interaction_matrix.py
     └── 03b_als_model.py
 ```
+---
+
+# Step 03c — Reranking with ALS Embeddings + NDCG@K Evaluation
+
+---
+
+## What This Step Does
+
+Uses the trained ALS embeddings to rerank items within each session,
+then evaluates ranking quality with NDCG@K against two baselines.
+
+This is the first time we get a number that answers the question:
+**"Is the model actually useful?"**
+
+---
+
+## How Reranking Works
+
+For every session in the dataset, 10 items were shown to a user.
+Reranking means re-ordering those 10 items using the model's scores
+instead of their original shown position.
+
+```
+Original order (position bias):       ALS reranked order:
+  Rank 1: item_idx=42  label=0          Rank 1: item_idx=7   label=3  ← purchase
+  Rank 2: item_idx=7   label=3          Rank 2: item_idx=15  label=2  ← cart
+  Rank 3: item_idx=15  label=2          Rank 3: item_idx=42  label=0
+  ...                                   ...
+```
+
+A good reranker moves high-label items (purchases, carts) to the top.
+NDCG@K measures how well it does this.
+
+---
+
+## Scoring: The Dot Product
+
+For each (user, item) pair in a session:
+
+```python
+score = user_vectors[user_idx] · item_vectors[item_idx]
+      = Σ user_vectors[u][k] * item_vectors[i][k]   for k in 0..31
+```
+
+This is a single matrix multiply — extremely fast even for large catalogs.
+Higher score = model predicts stronger user preference for this item.
+
+---
+
+## NDCG@K — How It's Computed
+
+NDCG (Normalized Discounted Cumulative Gain) measures ranking quality
+on a scale of 0 to 1.
+
+### Step 1: DCG@K
+```
+DCG@K = Σ (2^label - 1) / log2(rank + 1)   for rank 1..K
+```
+
+Rewards putting high-label items early. The log2 discount means rank 1
+is worth much more than rank 5:
+
+```
+Rank 1 discount: 1/log2(2) = 1.000
+Rank 2 discount: 1/log2(3) = 0.631
+Rank 3 discount: 1/log2(4) = 0.500
+Rank 5 discount: 1/log2(6) = 0.387
+Rank 10 discount:1/log2(11)= 0.289
+```
+
+### Step 2: IDCG@K (Ideal DCG)
+Sort labels in descending order → compute DCG. This is the best
+possible score for this session.
+
+### Step 3: NDCG@K
+```
+NDCG@K = DCG@K / IDCG@K   → value in [0, 1]
+```
+
+A score of 1.0 means the ranker produced the perfect ordering.
+A score of 0.5 means it captured about half the possible gain.
+
+### Why K=10?
+In ecommerce, users typically see 10 items on the first page.
+NDCG@10 measures quality of exactly what the user experiences.
+We also report @5 (above the fold) and @20 (second page).
+
+---
+
+## The Two Baselines
+
+### Baseline A — Original Position
+Items scored by inverse shown position (position 1 = score 10).
+This is what the user actually saw — no reranking applied.
+
+**If ALS beats this**, the model is correcting for position bias.
+It's finding items that were buried at rank 8–10 but deserved rank 1–3.
+
+### Baseline B — Random
+Items scored randomly within each session.
+This is the absolute floor — any model should beat this.
+
+---
+
+## The Position Bias Correction Check
+
+The most important diagnostic in this step. We group all ALS scores
+by the item's original shown position:
+
+```
+Position  1: avg ALS score = ?
+Position  2: avg ALS score = ?
+...
+Position 10: avg ALS score = ?
+```
+
+**If scores are NOT decreasing by position** — the model learned
+something real. It's assigning high scores to items based on their
+quality signals (CTR, category match) rather than just echoing
+the original position order back.
+
+**If scores ARE strictly decreasing by position** — the model
+overfit to position bias and learned nothing useful.
+
+---
+
+## Expected Results
+
+```
+────────────────────────────────────────────────────────────
+  SEARCH SESSIONS  (~32,500 sessions)
+────────────────────────────────────────────────────────────
+  Ranker                    NDCG@5    NDCG@10   NDCG@20
+  ───────────────────────── ──────── ──────── ────────
+  ALS (ours)                0.65+    0.67+    0.70+
+  Original position         ~0.50    ~0.52    ~0.55
+  Random                    ~0.45    ~0.47    ~0.50
+```
+
+The exact numbers depend on random seed and data. What matters is the ordering:
+**ALS > Original Position > Random**
+
+---
+
+## How to Run
+
+```bash
+python scripts/03c_rerank.py
+```
+
+Expected runtime: ~20 seconds.
+
+---
+
+## Project Structure at This Stage
+
+```
+reranker/
+├── data/
+│   ├── raw/
+│   ├── features/
+│   ├── matrix/
+│   ├── model/
+│   └── eval/
+│       ├── rerank_results.parquet     ← per-row scores + labels
+│       └── evaluation_summary.json   ← NDCG@K table
+└── scripts/
+    ├── 01_generate_synthetic_data.py
+    ├── 02_feature_engineering.py
+    ├── 03a_interaction_matrix.py
+    ├── 03b_als_model.py
+    └── 03c_rerank.py
+```
+
+---
