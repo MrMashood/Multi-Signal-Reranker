@@ -214,6 +214,10 @@ def main():
     items_path   = os.path.join(OUTPUT_DIR, "items.parquet")
     events_path  = os.path.join(OUTPUT_DIR, "events.parquet")
 
+    existing_users  = pd.DataFrame()
+    existing_items  = pd.DataFrame()
+    existing_events = pd.DataFrame()
+
     is_first_run = not os.path.exists(events_path)
 
     if is_first_run:
