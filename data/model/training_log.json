@@ -1,0 +1,99 @@
+{
+  "hyperparameters": {
+    "K": 32,
+    "n_iters": 15,
+    "lambda_reg": 1.0
+  },
+  "training_log": [
+    {
+      "iteration": 1,
+      "loss": 4761517.5852,
+      "delta": 0.0,
+      "time_s": 1.1
+    },
+    {
+      "iteration": 2,
+      "loss": 2840821.8267,
+      "delta": -1920695.7585,
+      "time_s": 1.0
+    },
+    {
+      "iteration": 3,
+      "loss": 2554122.7294,
+      "delta": -286699.0973,
+      "time_s": 1.41
+    },
+    {
+      "iteration": 4,
+      "loss": 2400832.6439,
+      "delta": -153290.0856,
+      "time_s": 1.22
+    },
+    {
+      "iteration": 5,
+      "loss": 2300231.3422,
+      "delta": -100601.3016,
+      "time_s": 2.3
+    },
+    {
+      "iteration": 6,
+      "loss": 2229319.123,
+      "delta": -70912.2192,
+      "time_s": 1.66
+    },
+    {
+      "iteration": 7,
+      "loss": 2177166.0901,
+      "delta": -52153.0329,
+      "time_s": 1.45
+    },
+    {
+      "iteration": 8,
+      "loss": 2137588.7446,
+      "delta": -39577.3456,
+      "time_s": 1.04
+    },
+    {
+      "iteration": 9,
+      "loss": 2106691.5868,
+      "delta": -30897.1578,
+      "time_s": 0.94
+    },
+    {
+      "iteration": 10,
+      "loss": 2081908.1515,
+      "delta": -24783.4353,
+      "time_s": 0.96
+    },
+    {
+      "iteration": 11,
+      "loss": 2061529.3205,
+      "delta": -20378.831,
+      "time_s": 1.23
+    },
+    {
+      "iteration": 12,
+      "loss": 2044408.0602,
+      "delta": -17121.2603,
+      "time_s": 1.06
+    },
+    {
+      "iteration": 13,
+      "loss": 2029762.6647,
+      "delta": -14645.3955,
+      "time_s": 1.07
+    },
+    {
+      "iteration": 14,
+      "loss": 2017048.3631,
+      "delta": -12714.3015,
+      "time_s": 0.95
+    },
+    {
+      "iteration": 15,
+      "loss": 2005875.536,
+      "delta": -11172.8271,
+      "time_s": 0.96
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "n_users": 9967,
+  "n_items": 4000,
+  "n_nonzero": 200766,
+  "density": 0.005036,
+  "alpha": 40,
+  "label_to_confidence": {
+    "0": 1.0,
+    "1": 41,
+    "2": 81,
+    "3": 161
+  },
+  "interactions_per_user": {
+    "min": 0,
+    "max": 70,
+    "mean": 20.14,
+    "median": 18.0
+  },
+  "interactions_per_item": {
+    "min": 6,
+    "max": 138,
+    "mean": 50.19,
+    "median": 40.0
+  },
+  "confidence_distribution": {
+    "1": 185760,
+    "2": 13407,
+    "3": 1599
+  }
+}
